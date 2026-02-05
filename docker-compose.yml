@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  llm-adapter-claw:
+    build: .
+    container_name: llm-adapter-claw
+    ports:
+      - "8080:8080"
+    environment:
+      - LOG_LEVEL=info
+      - LLM_BASE_URL=${LLM_BASE_URL:-https://api.openai.com/v1}
+      - LLM_API_KEY=${LLM_API_KEY:-}
+      - LLM_MODEL=${LLM_MODEL:-gpt-4}
+      - MEMORY_ENABLED=true
+      - VECTOR_DB_PATH=/data/memory_store/vss.db
+      - OPTIMIZATION_ENABLED=true
+    volumes:
+      - ./memory_store:/data/memory_store
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
+
+  # Optional: Vector DB UI (if using ChromaDB in future)
+  # chroma-ui:
+  #   image: chromadb/chroma:latest
+  #   ports:
+  #     - "8000:8000"
+  #   volumes:
+  #     - ./chroma_storage:/chroma/chroma
