@@ -177,6 +177,61 @@ curl http://localhost:8080/traffic/recent?n=5
 curl http://localhost:8080/metrics
 ```
 
+### 多LLM提供商配置
+
+支持 OpenAI、Kimi、Qwen、Claude、GLM、SiliconFlow、DeepSeek 等。
+
+**查看可用模板：**
+```bash
+curl http://localhost:8080/config/providers/templates
+```
+
+**从模板创建提供商：**
+```bash
+curl -X POST http://localhost:8080/config/providers/from-template \
+  -H "Content-Type: application/json" \
+  -d '{
+    "template_id": "kimi",
+    "provider_id": "my-kimi",
+    "api_key": "sk-xxx"
+  }'
+```
+
+**自定义提供商：**
+```bash
+curl -X POST http://localhost:8080/config/providers \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id": "custom-openai",
+    "name": "Custom OpenAI",
+    "base_url": "https://api.custom.com/v1",
+    "api_key": "sk-xxx",
+    "default_model": "gpt-4"
+  }'
+```
+
+**使用提供商前缀指定模型：**
+```json
+{
+  "model": "kimi:moonshot-v1-8k",
+  "messages": [...]
+}
+```
+
+**配置管理端点：**
+
+| 端点 | 方法 | 描述 |
+|------|------|------|
+| `/config/providers/templates` | GET | 列出可用模板 |
+| `/config/providers` | GET | 列出所有提供商 |
+| `/config/providers` | POST | 创建自定义提供商 |
+| `/config/providers/from-template` | POST | 从模板创建 |
+| `/config/providers/{id}` | GET | 获取提供商详情 |
+| `/config/providers/{id}` | PATCH | 更新提供商 |
+| `/config/providers/{id}` | DELETE | 删除提供商 |
+| `/config/providers/{id}/default` | POST | 设为默认 |
+| `/config/providers/default` | GET | 获取默认提供商 |
+
 ---
 
 ## 文档
@@ -192,6 +247,7 @@ curl http://localhost:8080/metrics
 
 | 版本 | 日期 | 变更内容 | 提交者 |
 |------|------|----------|--------|
+| 0.4.0 | 2026-02-06 | 多LLM提供商支持：OpenAI/Kimi/Qwen/Claude/GLM/硅基流动等，API动态配置 | 阿凯 💪 |
 | 0.3.0 | 2026-02-06 | 流量分析与度量：Token 节省统计、Prometheus 指标、uv 启动入口 | 阿凯 💪 |
 | 0.2.0 | 2026-02-05 | 核心处理管道：意图分类、上下文组装、请求优化、流式响应| 阿凯 💪 |
 | 0.1.0 | 2026-02-05 | 文档补充：添加分析报告、设计方案、风险评估三篇核心设计文档 | 阿凯 💪 |

@@ -7,9 +7,11 @@ from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 
 from llm_adapter_claw import __version__
 from llm_adapter_claw.config import get_settings
+from llm_adapter_claw.config_api import router as config_router, get_provider_registry, set_provider_registry
 from llm_adapter_claw.core import create_pipeline
 from llm_adapter_claw.metrics import MetricsExporter
 from llm_adapter_claw.models import ChatRequest
+from llm_adapter_claw.providers.registry import LLMProvider, ProviderRegistry
 from llm_adapter_claw.utils import configure_logging, get_logger
 
 logger = get_logger(__name__)
@@ -29,8 +31,25 @@ async def lifespan(app: FastAPI):
         optimization=settings.optimization_enabled,
     )
     
-    # Initialize pipeline
-    app.state.pipeline = create_pipeline(settings)
+    # Initialize provider registry
+    registry = ProviderRegistry()
+    
+    # Add default provider from settings if configured
+    if settings.llm_base_url:
+        default_provider = LLMProvider(
+            id="default",
+            name="Default",
+            base_url=settings.llm_base_url,
+            api_key=settings.llm_api_key,
+            default_model=settings.llm_model,
+        )
+        registry.add_provider(default_provider, set_default=True)
+    
+    set_provider_registry(registry)
+    app.state.provider_registry = registry
+    
+    # Initialize pipeline with registry
+    app.state.pipeline = create_pipeline(settings, registry)
     app.state.settings = settings
     
     yield
@@ -44,6 +63,9 @@ app = FastAPI(
     version=__version__,
     lifespan=lifespan,
 )
+
+# Include config API router
+app.include_router(config_router)
 
 
 @app.get("/health")

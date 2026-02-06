@@ -12,6 +12,7 @@ from llm_adapter_claw.core.sanitizer import RequestSanitizer, create_sanitizer
 from llm_adapter_claw.metrics import MetricsExporter
 from llm_adapter_claw.metrics.traffic_analyzer import TrafficAnalyzer
 from llm_adapter_claw.models import ChatRequest
+from llm_adapter_claw.providers.registry import ProviderRegistry
 from llm_adapter_claw.utils import get_logger
 
 logger = get_logger(__name__)
@@ -19,7 +20,7 @@ logger = get_logger(__name__)
 
 class ProcessingPipeline:
     """Main processing pipeline for request optimization.
-    
+
     Coordinates:
     1. Sanitization (validate & flag)
     2. Intent classification
@@ -27,33 +28,36 @@ class ProcessingPipeline:
     4. Forward to LLM
     5. Traffic analysis & metrics collection
     """
-    
+
     def __init__(
         self,
         sanitizer: RequestSanitizer | None = None,
-        classifier = None,
+        classifier=None,
         assembler: ContextAssembler | None = None,
         client: LLMClient | None = None,
         settings: Settings | None = None,
+        registry: ProviderRegistry | None = None,
     ) -> None:
         """Initialize pipeline.
-        
+
         Args:
             sanitizer: Request sanitizer
             classifier: Intent classifier
             assembler: Context assembler
             client: LLM client
             settings: Application settings (for defaults)
+            registry: Provider registry for multi-provider support
         """
         self.sanitizer = sanitizer or create_sanitizer()
         self.classifier = classifier or create_classifier()
         self.assembler = assembler or create_assembler(settings)
         self.client = client
         self.settings = settings
+        self.registry = registry
         self.traffic_analyzer = TrafficAnalyzer()
-        
+
         if settings and not client:
-            self.client = create_client(settings)
+            self.client = create_client(settings, registry)
     
     async def process(self, request: ChatRequest) -> dict:
         """Process request through pipeline.
@@ -182,13 +186,17 @@ class ProcessingPipeline:
         }
 
 
-def create_pipeline(settings: Settings | None = None) -> ProcessingPipeline:
+def create_pipeline(
+    settings: Settings | None = None,
+    registry: ProviderRegistry | None = None,
+) -> ProcessingPipeline:
     """Factory for processing pipeline.
-    
+
     Args:
         settings: Application settings
-        
+        registry: Provider registry for multi-provider support
+
     Returns:
         Configured pipeline
     """
-    return ProcessingPipeline(settings=settings)
+    return ProcessingPipeline(settings=settings, registry=registry)
