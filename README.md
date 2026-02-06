@@ -44,8 +44,15 @@ cd llm_adapter_claw
 # 安装 uv (如果尚未安装)
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# 启动服务 (自动处理依赖)
+# 配置 LLM 供应商并启动（以 OpenAI 为例）
+export LLM_API_KEY=sk-your-openai-key
 uv run --no-dev python -m llm_adapter_claw
+
+# 或使用其他供应商（如 Kimi）
+# export LLM_BASE_URL=https://api.moonshot.cn/v1
+# export LLM_API_KEY=sk-your-kimi-key
+# export LLM_MODEL=moonshot-v1-8k
+# uv run --no-dev python -m llm_adapter_claw
 ```
 
 ### 安装 (使用 pip)
@@ -73,14 +80,23 @@ docker-compose up -d
 ### 启动服务
 
 ```bash
-# 使用 uv (推荐 - 无需手动安装依赖)
+# 方式 1：使用环境变量配置（快速启动）
+export LLM_API_KEY=sk-your-key  # 必需
+# export LLM_BASE_URL=https://api.openai.com/v1  # 可选，默认 OpenAI
+# export LLM_MODEL=gpt-4  # 可选，默认 gpt-4
 uv run --no-dev python -m llm_adapter_claw
 
-# 或使用 pip 安装后的命令
+# 方式 2：使用配置文件（推荐多供应商场景）
+# 创建 config.json 配置多个供应商后启动
+uv run --no-dev python -m llm_adapter_claw
+
+# 方式 3：使用 pip 安装后的命令
 llm-adapter-claw
 # 或
 python -m llm_adapter_claw
 ```
+
+**说明**：如果不指定 `LLM_BASE_URL`，默认使用 OpenAI。启动后可通过 `POST /config/providers` API 动态添加其他供应商。
 
 ---
 

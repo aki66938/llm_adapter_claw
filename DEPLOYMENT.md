@@ -44,9 +44,24 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 # 或
 # curl -LsSf https://astral.sh/uv/install.ps1 | powershell
 
-# 3. 启动服务（uv 自动处理依赖）
+# 3. 配置并启动（必须设置 LLM API 密钥）
+# 方式 A：使用 OpenAI（默认）
+export LLM_API_KEY=sk-your-openai-key
+uv run --no-dev python -m llm_adapter_claw
+
+# 方式 B：使用其他供应商（如 Kimi）
+export LLM_BASE_URL=https://api.moonshot.cn/v1
+export LLM_API_KEY=sk-your-kimi-key
+export LLM_MODEL=moonshot-v1-8k
+uv run --no-dev python -m llm_adapter_claw
+
+# 方式 C：通过配置文件启动（推荐多供应商场景）
+# 创建 config.json 后启动
+export LLM_API_KEY=sk-your-key
 uv run --no-dev python -m llm_adapter_claw
 ```
+
+**注意**：如果不指定 `LLM_BASE_URL`，默认使用 OpenAI（https://api.openai.com/v1）。启动后可通过 API 动态添加其他供应商。
 
 **可选：启用语义记忆（需要额外依赖）**
 
