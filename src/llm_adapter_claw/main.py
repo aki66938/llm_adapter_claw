@@ -3,11 +3,12 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, status
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 
 from llm_adapter_claw import __version__
 from llm_adapter_claw.config import get_settings
 from llm_adapter_claw.core import create_pipeline
+from llm_adapter_claw.metrics import MetricsExporter
 from llm_adapter_claw.models import ChatRequest
 from llm_adapter_claw.utils import configure_logging, get_logger
 
@@ -58,16 +59,53 @@ async def readiness_check() -> dict[str, str]:
 
 
 @app.get("/metrics")
-async def metrics() -> dict[str, int]:
-    """Metrics endpoint."""
-    return {
-        "requests_total": 0,
-        "tokens_saved": 0,
-        "memory_queries": 0,
-    }
+async def metrics(request: Request) -> PlainTextResponse:
+    """Prometheus metrics endpoint."""
+    content_type, metrics_body = MetricsExporter.get_prometheus_format()
+    return PlainTextResponse(
+        content=metrics_body.decode("utf-8"),
+        media_type=content_type
+    )
 
 
-@app.post("/v1/chat/completions")
+@app.get("/traffic/stats")
+async def traffic_stats(request: Request) -> JSONResponse:
+    """Traffic analysis statistics endpoint."""
+    pipeline = request.app.state.pipeline
+    stats = pipeline.traffic_analyzer.get_stats()
+    return JSONResponse(content=stats)
+
+
+@app.get("/traffic/recent")
+async def traffic_recent(request: Request, n: int = 10) -> JSONResponse:
+    """Recent request metrics endpoint.
+
+    Args:
+        n: Number of recent requests to return (default 10)
+    """
+    pipeline = request.app.state.pipeline
+    recent = pipeline.traffic_analyzer.get_recent_metrics(n)
+
+    # Convert dataclasses to dicts
+    metrics_list = [
+        {
+            "request_id": m.request_id,
+            "timestamp": m.timestamp,
+            "model": m.model,
+            "original_tokens": m.original_tokens,
+            "optimized_tokens": m.optimized_tokens,
+            "tokens_saved": m.tokens_saved,
+            "intent": m.intent,
+            "optimization_applied": m.optimization_applied,
+            "response_time_ms": round(m.response_time_ms, 2),
+        }
+        for m in recent
+    ]
+
+    return JSONResponse(content={"recent_requests": metrics_list})
+
+
+@app.post("/v1/chat/completions", response_model=None)
 async def chat_completions(request: Request) -> JSONResponse | StreamingResponse:
     """Chat completions endpoint."""
     pipeline = request.app.state.pipeline

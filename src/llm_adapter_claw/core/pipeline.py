@@ -1,10 +1,16 @@
 """Processing pipeline - coordinates context optimization."""
 
+import time
+import uuid
+from typing import Any
+
 from llm_adapter_claw.config import Settings
 from llm_adapter_claw.core.assembler import ContextAssembler, create_assembler
 from llm_adapter_claw.core.classifier import Intent, create_classifier
 from llm_adapter_claw.core.proxy_client import LLMClient, create_client
 from llm_adapter_claw.core.sanitizer import RequestSanitizer, create_sanitizer
+from llm_adapter_claw.metrics import MetricsExporter
+from llm_adapter_claw.metrics.traffic_analyzer import TrafficAnalyzer
 from llm_adapter_claw.models import ChatRequest
 from llm_adapter_claw.utils import get_logger
 
@@ -19,6 +25,7 @@ class ProcessingPipeline:
     2. Intent classification
     3. Context assembly
     4. Forward to LLM
+    5. Traffic analysis & metrics collection
     """
     
     def __init__(
@@ -43,6 +50,7 @@ class ProcessingPipeline:
         self.assembler = assembler or create_assembler(settings)
         self.client = client
         self.settings = settings
+        self.traffic_analyzer = TrafficAnalyzer()
         
         if settings and not client:
             self.client = create_client(settings)
@@ -56,11 +64,18 @@ class ProcessingPipeline:
         Returns:
             Response from LLM
         """
+        request_id = str(uuid.uuid4())[:8]
+        start_time = time.time()
+        
         logger.info(
             "pipeline.start",
+            request_id=request_id,
             model=request.model,
             messages=len(request.messages)
         )
+        
+        # Store original for comparison
+        original_payload = self._to_payload(request)
         
         # Step 1: Sanitize
         flags_map = self.sanitizer.sanitize(request)
@@ -73,17 +88,46 @@ class ProcessingPipeline:
         intent = self.classifier.classify(request)
         
         # Step 3: Assemble context (if optimization enabled)
-        if self.settings and self.settings.optimization_enabled:
+        optimization_enabled = bool(self.settings and self.settings.optimization_enabled)
+        if optimization_enabled:
             optimized = self.assembler.assemble(request, intent, preserve_flags)
         else:
             optimized = request
             logger.info("pipeline.optimization_disabled")
         
-        # Step 4: Forward to LLM
-        payload = self._to_payload(optimized)
-        response = await self.client.forward(payload)
+        optimized_payload = self._to_payload(optimized)
         
-        logger.info("pipeline.complete")
+        # Step 4: Forward to LLM
+        response = await self.client.forward(optimized_payload)
+        response_time = time.time() - start_time
+        
+        # Step 5: Traffic analysis
+        metrics = self.traffic_analyzer.analyze_request(
+            request_id=request_id,
+            model=request.model,
+            original_messages=original_payload["messages"],
+            optimized_messages=optimized_payload["messages"],
+            intent=intent.value,
+            optimization_enabled=optimization_enabled,
+        )
+        metrics.response_time_ms = response_time * 1000
+        
+        # Export to Prometheus
+        MetricsExporter.record_request(
+            model=request.model,
+            intent=intent.value,
+            optimization_applied=metrics.optimization_applied,
+            original_tokens=metrics.original_tokens,
+            optimized_tokens=metrics.optimized_tokens,
+            tokens_saved=metrics.tokens_saved,
+        )
+        
+        logger.info(
+            "pipeline.complete",
+            request_id=request_id,
+            response_time_ms=round(response_time * 1000, 2),
+            tokens_saved=metrics.tokens_saved
+        )
         return response.json()
     
     async def stream(self, request: ChatRequest):
