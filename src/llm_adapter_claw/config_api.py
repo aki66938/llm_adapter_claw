@@ -5,6 +5,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from llm_adapter_claw.core.circuit_breaker import get_circuit_breaker_registry
 from llm_adapter_claw.providers.registry import LLMProvider, ProviderRegistry
 from llm_adapter_claw.utils import get_logger
 
@@ -210,3 +211,49 @@ async def get_default_provider() -> ProviderResponse:
         raise HTTPException(status_code=404, detail="No default provider configured")
 
     return ProviderResponse(**provider.to_dict())
+
+
+# Circuit breaker endpoints
+@router.get("/circuit-breakers")
+async def list_circuit_breakers() -> dict[str, list[dict[str, Any]]]:
+    """List all circuit breakers and their status."""
+    cb_registry = get_circuit_breaker_registry()
+    return {"circuit_breakers": cb_registry.list_all()}
+
+
+@router.get("/circuit-breakers/{name}")
+async def get_circuit_breaker(name: str) -> dict[str, Any]:
+    """Get circuit breaker details."""
+    cb_registry = get_circuit_breaker_registry()
+    cb = cb_registry.get(name)
+
+    if not cb:
+        raise HTTPException(status_code=404, detail=f"Circuit breaker not found: {name}")
+
+    return cb.get_stats_dict()
+
+
+@router.post("/circuit-breakers/{name}/reset")
+async def reset_circuit_breaker(name: str) -> dict[str, str]:
+    """Reset circuit breaker to CLOSED state."""
+    from llm_adapter_claw.core.circuit_breaker import CircuitState
+
+    cb_registry = get_circuit_breaker_registry()
+    cb = cb_registry.get(name)
+
+    if not cb:
+        raise HTTPException(status_code=404, detail=f"Circuit breaker not found: {name}")
+
+    # Force transition to CLOSED
+    cb._state = CircuitState.CLOSED
+    cb._stats.failure_count = 0
+    cb._stats.success_count = 0
+    return {"message": f"Circuit breaker {name} reset to CLOSED"}
+
+
+@router.post("/circuit-breakers/reset-all")
+async def reset_all_circuit_breakers() -> dict[str, str]:
+    """Reset all circuit breakers to CLOSED state."""
+    cb_registry = get_circuit_breaker_registry()
+    cb_registry.reset_all()
+    return {"message": "All circuit breakers reset to CLOSED"}

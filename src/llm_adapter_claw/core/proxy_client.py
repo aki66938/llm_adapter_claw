@@ -4,6 +4,11 @@ import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from llm_adapter_claw.config import Settings
+from llm_adapter_claw.core.circuit_breaker import (
+    CircuitBreaker,
+    CircuitBreakerConfig,
+    get_circuit_breaker_registry,
+)
 from llm_adapter_claw.providers.registry import LLMProvider, ProviderRegistry
 from llm_adapter_claw.utils import get_logger
 
@@ -31,6 +36,15 @@ class LLMClient:
         self.api_key = settings.llm_api_key
         self.timeout = settings.request_timeout
         self.max_retries = settings.max_retries
+        # Circuit breaker for LLM calls
+        cb_config = CircuitBreakerConfig(
+            failure_threshold=settings.circuit_breaker_threshold,
+            recovery_timeout=settings.circuit_breaker_timeout,
+        )
+        self.circuit_breaker = get_circuit_breaker_registry().get_or_create(
+            "llm_upstream",
+            cb_config,
+        )
 
     def _get_provider(self, model: str | None = None) -> LLMProvider | None:
         """Get provider for the request.
@@ -97,7 +111,22 @@ class LLMClient:
 
         Returns:
             Upstream response
+
+        Raises:
+            Exception: If circuit breaker is open or request fails
         """
+        # Check circuit breaker
+        if not self.circuit_breaker.can_execute():
+            logger.error(
+                "llm.circuit_open",
+                circuit=self.circuit_breaker.name,
+                state=self.circuit_breaker.state.value,
+            )
+            raise Exception(
+                f"Circuit breaker open for {self.circuit_breaker.name}. "
+                "Service temporarily unavailable."
+            )
+
         model = payload.get("model", "")
         provider = self._get_provider(model)
 
@@ -113,15 +142,25 @@ class LLMClient:
 
         timeout = provider.timeout if provider else self.timeout
 
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                url,
-                headers=headers,
-                json=body,
-                timeout=timeout,
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    url,
+                    headers=headers,
+                    json=body,
+                    timeout=timeout,
+                )
+                response.raise_for_status()
+                self.circuit_breaker.record_success()
+                return response
+        except Exception as e:
+            self.circuit_breaker.record_failure()
+            logger.error(
+                "llm.request_failed",
+                error=str(e),
+                circuit_state=self.circuit_breaker.state.value,
             )
-            response.raise_for_status()
-            return response
+            raise
 
     async def stream(self, payload: dict):
         """Stream response from upstream.

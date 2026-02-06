@@ -232,6 +232,34 @@ curl -X POST http://localhost:8080/config/providers \
 | `/config/providers/{id}/default` | POST | 设为默认 |
 | `/config/providers/default` | GET | 获取默认提供商 |
 
+### 熔断器与降级
+
+**熔断器状态监控：**
+```bash
+curl http://localhost:8080/config/circuit-breakers
+# {"circuit_breakers": [{"name": "llm_upstream", "state": "closed", ...}]}
+
+# 查看具体熔断器
+curl http://localhost:8080/config/circuit-breakers/llm_upstream
+
+# 手动重置熔断器
+curl -X POST http://localhost:8080/config/circuit-breakers/llm_upstream/reset
+
+# 重置所有熔断器
+curl -X POST http://localhost:8080/config/circuit-breakers/reset-all
+```
+
+**熔断器配置（环境变量）：**
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `CIRCUIT_BREAKER_THRESHOLD` | 5 | 触发熔断的连续失败次数 |
+| `CIRCUIT_BREAKER_TIMEOUT` | 60 | 熔断后恢复等待时间（秒） |
+
+**熔断器工作原理：**
+- `CLOSED` - 正常状态，请求正常通过
+- `OPEN` - 熔断状态，请求直接拒绝（防止雪崩）
+- `HALF_OPEN` - 测试状态，少量请求试探恢复
+
 ---
 
 ## 文档
@@ -247,6 +275,7 @@ curl -X POST http://localhost:8080/config/providers \
 
 | 版本 | 日期 | 变更内容 | 提交者 |
 |------|------|----------|--------|
+| 0.5.0 | 2026-02-06 | 熔断降级机制：Circuit Breaker、Graceful Degradation、API状态管理 | 阿凯 💪 |
 | 0.4.0 | 2026-02-06 | 多LLM提供商支持：OpenAI/Kimi/Qwen/Claude/GLM/硅基流动等，API动态配置 | 阿凯 💪 |
 | 0.3.0 | 2026-02-06 | 流量分析与度量：Token 节省统计、Prometheus 指标、uv 启动入口 | 阿凯 💪 |
 | 0.2.0 | 2026-02-05 | 核心处理管道：意图分类、上下文组装、请求优化、流式响应| 阿凯 💪 |
