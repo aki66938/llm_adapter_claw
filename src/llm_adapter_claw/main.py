@@ -1,6 +1,7 @@
 """Main FastAPI application entry point."""
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
@@ -8,6 +9,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 from llm_adapter_claw import __version__
 from llm_adapter_claw.config import get_settings
 from llm_adapter_claw.config_api import router as config_router, get_provider_registry, set_provider_registry
+from llm_adapter_claw.config_reload import ConfigManager, get_config_manager
 from llm_adapter_claw.core import create_pipeline
 from llm_adapter_claw.memory.retriever import MemoryRetriever, create_retriever
 from llm_adapter_claw.metrics import MetricsExporter
@@ -18,12 +20,54 @@ from llm_adapter_claw.utils import configure_logging, get_logger
 logger = get_logger(__name__)
 
 
+def _on_providers_config_change(new_config: dict, old_config: dict) -> None:
+    """Handle providers configuration change.
+
+    Args:
+        new_config: New configuration
+        old_config: Old configuration
+    """
+    from llm_adapter_claw.providers.registry import LLMProvider
+
+    providers_config = new_config.get("providers", [])
+    if not providers_config:
+        return
+
+    registry = get_provider_registry()
+
+    # Update or add providers from config
+    for provider_data in providers_config:
+        provider_id = provider_data.get("id")
+        if not provider_id:
+            continue
+
+        existing = registry.get_provider(provider_id)
+        if existing:
+            # Update existing
+            for key, value in provider_data.items():
+                if hasattr(existing, key) and key != "id":
+                    setattr(existing, key, value)
+            logger.info("providers.updated_from_config", provider_id=provider_id)
+        else:
+            # Add new
+            try:
+                provider = LLMProvider(**provider_data)
+                registry.add_provider(provider)
+                logger.info("providers.added_from_config", provider_id=provider_id)
+            except Exception as e:
+                logger.error(
+                    "providers.add_failed",
+                    provider_id=provider_id,
+                    error=str(e),
+                )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager."""
     settings = get_settings()
     configure_logging(settings.log_level)
-    
+
     logger.info(
         "startup",
         version=__version__,
@@ -31,10 +75,22 @@ async def lifespan(app: FastAPI):
         port=settings.port,
         optimization=settings.optimization_enabled,
     )
-    
+
+    # Initialize config manager with hot-reload
+    config_manager = get_config_manager()
+    config_path = Path("config.json")
+    if config_path.exists():
+        # Register callback for providers config
+        config_manager.register_callback(_on_providers_config_change)
+        # Load with auto-reload
+        config_manager.load_from_file(config_path, auto_reload=True)
+        app.state.config_manager = config_manager
+    else:
+        logger.info("config.file_not_found", path=str(config_path))
+
     # Initialize provider registry
     registry = ProviderRegistry()
-    
+
     # Add default provider from settings if configured
     if settings.llm_base_url:
         default_provider = LLMProvider(
@@ -45,10 +101,24 @@ async def lifespan(app: FastAPI):
             default_model=settings.llm_model,
         )
         registry.add_provider(default_provider, set_default=True)
-    
+
+    # Load providers from file if exists
+    providers_file = Path("providers.json")
+    if providers_file.exists():
+        try:
+            import json
+            with open(providers_file) as f:
+                providers_data = json.load(f)
+            for provider_data in providers_data.get("providers", []):
+                provider = LLMProvider(**provider_data)
+                registry.add_provider(provider)
+            logger.info("providers.loaded_from_file", path=str(providers_file))
+        except Exception as e:
+            logger.error("providers.load_failed", error=str(e))
+
     set_provider_registry(registry)
     app.state.provider_registry = registry
-    
+
     # Initialize memory retriever if enabled
     memory_retriever = None
     if settings.memory_enabled:
@@ -56,7 +126,7 @@ async def lifespan(app: FastAPI):
             memory_retriever = create_retriever(
                 store_backend="sqlite-vss",
                 db_path=settings.vector_db_path,
-                embedder_model="hash",  # Use hash as default (no heavy deps)
+                embedder_model="hash",
                 top_k=settings.max_memory_results,
             )
             logger.info("memory.initialized", db_path=settings.vector_db_path)
@@ -66,9 +136,12 @@ async def lifespan(app: FastAPI):
     # Initialize pipeline with registry and memory retriever
     app.state.pipeline = create_pipeline(settings, registry, memory_retriever)
     app.state.settings = settings
-    
+
     yield
-    
+
+    # Cleanup
+    if hasattr(app.state, "config_manager"):
+        app.state.config_manager.stop()
     logger.info("shutdown")
 
 

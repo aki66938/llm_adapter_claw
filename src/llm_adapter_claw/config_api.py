@@ -257,3 +257,40 @@ async def reset_all_circuit_breakers() -> dict[str, str]:
     cb_registry = get_circuit_breaker_registry()
     cb_registry.reset_all()
     return {"message": "All circuit breakers reset to CLOSED"}
+
+
+# Config reload endpoints
+@router.post("/reload")
+async def reload_config() -> dict[str, Any]:
+    """Force reload configuration from file."""
+    from llm_adapter_claw.config_reload import get_config_manager
+
+    manager = get_config_manager()
+    new_config = manager.force_reload()
+
+    if new_config is None:
+        raise HTTPException(
+            status_code=500, detail="Failed to reload configuration"
+        )
+
+    return {
+        "message": "Configuration reloaded",
+        "config_keys": list(new_config.keys()),
+    }
+
+
+@router.get("/status")
+async def config_status() -> dict[str, Any]:
+    """Get configuration status."""
+    from llm_adapter_claw.config_reload import get_config_manager
+
+    manager = get_config_manager()
+    config = manager.get_config()
+
+    return {
+        "has_config": bool(config),
+        "config_keys": list(config.keys()) if config else [],
+        "auto_reload_enabled": manager._reloader is not None
+        if hasattr(manager, "_reloader")
+        else False,
+    }

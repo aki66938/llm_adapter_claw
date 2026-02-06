@@ -307,6 +307,50 @@ curl -X POST http://localhost:8080/memory/search \
 uv run --no-dev --extra memory python -m llm_adapter_claw
 ```
 
+### 配置热加载
+
+支持从配置文件动态加载和更新配置，无需重启服务。
+
+**配置文件格式（config.json）：**
+```json
+{
+  "providers": [
+    {
+      "id": "kimi",
+      "name": "Kimi",
+      "base_url": "https://api.moonshot.cn/v1",
+      "api_key": "sk-xxx",
+      "default_model": "moonshot-v1-8k",
+      "models": ["moonshot-v1-8k", "moonshot-v1-32k"]
+    }
+  ]
+}
+```
+
+**自动热加载：**
+- 启动时自动加载 `config.json`（如果存在）
+- 文件修改后自动重载（轮询间隔 1 秒）
+- 仅更新 providers 配置，其他配置项保持原样
+
+**手动重载API：**
+```bash
+# 强制立即重载配置
+curl -X POST http://localhost:8080/config/reload
+# {"message": "Configuration reloaded", "config_keys": ["providers"]}
+
+# 查看配置状态
+curl http://localhost:8080/config/status
+# {"has_config": true, "config_keys": ["providers"], "auto_reload_enabled": true}
+```
+
+**providers.json 文件：**
+也可通过 `providers.json` 文件批量导入提供商配置（启动时一次性加载，不支持热重载）：
+```bash
+curl -X POST http://localhost:8080/config/providers \
+  -H "Content-Type: application/json" \
+  -d @providers.json
+```
+
 ---
 
 ## 文档
@@ -322,6 +366,7 @@ uv run --no-dev --extra memory python -m llm_adapter_claw
 
 | 版本 | 日期 | 变更内容 | 提交者 |
 |------|------|----------|--------|
+| 0.7.0 | 2026-02-06 | 配置热加载：文件监听、自动重载、API手动重载、providers批量导入 | 阿凯 💪 |
 | 0.6.0 | 2026-02-06 | 语义记忆系统：向量存储、语义检索、自动注入、记忆管理API | 阿凯 💪 |
 | 0.5.0 | 2026-02-06 | 熔断降级机制：Circuit Breaker、Graceful Degradation、API状态管理 | 阿凯 💪 |
 | 0.4.0 | 2026-02-06 | 多LLM提供商支持：OpenAI/Kimi/Qwen/Claude/GLM/硅基流动等，API动态配置 | 阿凯 💪 |
