@@ -260,6 +260,53 @@ curl -X POST http://localhost:8080/config/circuit-breakers/reset-all
 - `OPEN` - 熔断状态，请求直接拒绝（防止雪崩）
 - `HALF_OPEN` - 测试状态，少量请求试探恢复
 
+### 语义记忆系统
+
+**添加记忆：**
+```bash
+curl -X POST http://localhost:8080/memory/add \
+  -H "Content-Type: application/json" \
+  -d '{"text": "用户喜欢Python编程", "metadata": {"category": "preference"}}'
+```
+
+**搜索记忆：**
+```bash
+curl -X POST http://localhost:8080/memory/search \
+  -H "Content-Type: application/json" \
+  -d '{"query": "用户的编程喜好", "top_k": 3}'
+```
+
+**自动记忆检索：**
+当请求被分类为 `RETRIEVAL` 意图时，系统会自动：
+1. 从最后一条用户消息提取查询
+2. 在记忆库中搜索相关内容
+3. 将结果注入 System Prompt
+
+**记忆管理端点：**
+
+| 端点 | 方法 | 描述 |
+|------|------|------|
+| `/memory/add` | POST | 添加记忆 |
+| `/memory/search` | POST | 语义搜索记忆 |
+| `/memory/{id}` | DELETE | 删除记忆 |
+| `/memory/clear` | POST | 清空所有记忆 |
+
+**配置环境变量：**
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `MEMORY_ENABLED` | `true` | 启用记忆系统 |
+| `VECTOR_DB_PATH` | `./memory_store/vss.db` | 向量数据库路径 |
+| `MAX_MEMORY_RESULTS` | `3` | 每次检索最大结果数 |
+
+**Embedder 选择：**
+- `hash` (默认) - 无需额外依赖，基于哈希的简单向量
+- `transformer` - 使用 sentence-transformers (需安装 `[memory]` 依赖)
+
+```bash
+# 使用 transformer embedder (更准确的语义)
+uv run --no-dev --extra memory python -m llm_adapter_claw
+```
+
 ---
 
 ## 文档
@@ -275,6 +322,7 @@ curl -X POST http://localhost:8080/config/circuit-breakers/reset-all
 
 | 版本 | 日期 | 变更内容 | 提交者 |
 |------|------|----------|--------|
+| 0.6.0 | 2026-02-06 | 语义记忆系统：向量存储、语义检索、自动注入、记忆管理API | 阿凯 💪 |
 | 0.5.0 | 2026-02-06 | 熔断降级机制：Circuit Breaker、Graceful Degradation、API状态管理 | 阿凯 💪 |
 | 0.4.0 | 2026-02-06 | 多LLM提供商支持：OpenAI/Kimi/Qwen/Claude/GLM/硅基流动等，API动态配置 | 阿凯 💪 |
 | 0.3.0 | 2026-02-06 | 流量分析与度量：Token 节省统计、Prometheus 指标、uv 启动入口 | 阿凯 💪 |

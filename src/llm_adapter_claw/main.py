@@ -9,6 +9,7 @@ from llm_adapter_claw import __version__
 from llm_adapter_claw.config import get_settings
 from llm_adapter_claw.config_api import router as config_router, get_provider_registry, set_provider_registry
 from llm_adapter_claw.core import create_pipeline
+from llm_adapter_claw.memory.retriever import MemoryRetriever, create_retriever
 from llm_adapter_claw.metrics import MetricsExporter
 from llm_adapter_claw.models import ChatRequest
 from llm_adapter_claw.providers.registry import LLMProvider, ProviderRegistry
@@ -48,8 +49,22 @@ async def lifespan(app: FastAPI):
     set_provider_registry(registry)
     app.state.provider_registry = registry
     
-    # Initialize pipeline with registry
-    app.state.pipeline = create_pipeline(settings, registry)
+    # Initialize memory retriever if enabled
+    memory_retriever = None
+    if settings.memory_enabled:
+        try:
+            memory_retriever = create_retriever(
+                store_backend="sqlite-vss",
+                db_path=settings.vector_db_path,
+                embedder_model="hash",  # Use hash as default (no heavy deps)
+                top_k=settings.max_memory_results,
+            )
+            logger.info("memory.initialized", db_path=settings.vector_db_path)
+        except Exception as e:
+            logger.error("memory.initialization_failed", error=str(e))
+
+    # Initialize pipeline with registry and memory retriever
+    app.state.pipeline = create_pipeline(settings, registry, memory_retriever)
     app.state.settings = settings
     
     yield
@@ -125,6 +140,127 @@ async def traffic_recent(request: Request, n: int = 10) -> JSONResponse:
     ]
 
     return JSONResponse(content={"recent_requests": metrics_list})
+
+
+# Memory management endpoints
+@app.post("/memory/add")
+async def memory_add(request: Request) -> JSONResponse:
+    """Add a memory to the store.
+
+    Request body:
+        {"text": "memory content", "metadata": {"key": "value"}}
+    """
+    pipeline = request.app.state.pipeline
+    if not pipeline.memory_retriever:
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"error": "Memory retrieval not enabled"},
+        )
+
+    try:
+        body = await request.json()
+        text = body.get("text", "")
+        metadata = body.get("metadata")
+
+        if not text:
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={"error": "Missing 'text' field"},
+            )
+
+        memory_id = await pipeline.memory_retriever.add_memory(text, metadata)
+        return JSONResponse(content={"id": memory_id, "status": "added"})
+    except Exception as e:
+        logger.error("memory.add_failed", error=str(e))
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"error": str(e)},
+        )
+
+
+@app.post("/memory/search")
+async def memory_search(request: Request) -> JSONResponse:
+    """Search memories by query.
+
+    Request body:
+        {"query": "search text", "top_k": 3, "include_metadata": false}
+    """
+    pipeline = request.app.state.pipeline
+    if not pipeline.memory_retriever:
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"error": "Memory retrieval not enabled"},
+        )
+
+    try:
+        body = await request.json()
+        query = body.get("query", "")
+        top_k = body.get("top_k", 3)
+        include_metadata = body.get("include_metadata", False)
+
+        if not query:
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={"error": "Missing 'query' field"},
+            )
+
+        results = await pipeline.memory_retriever.retrieve(
+            query, top_k=top_k, include_metadata=include_metadata
+        )
+        return JSONResponse(content={"results": results, "count": len(results)})
+    except Exception as e:
+        logger.error("memory.search_failed", error=str(e))
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"error": str(e)},
+        )
+
+
+@app.delete("/memory/{memory_id}")
+async def memory_delete(memory_id: str, request: Request) -> JSONResponse:
+    """Delete a memory by ID."""
+    pipeline = request.app.state.pipeline
+    if not pipeline.memory_retriever:
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"error": "Memory retrieval not enabled"},
+        )
+
+    try:
+        success = await pipeline.memory_retriever.delete(memory_id)
+        if success:
+            return JSONResponse(content={"id": memory_id, "status": "deleted"})
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content={"error": "Memory not found"},
+        )
+    except Exception as e:
+        logger.error("memory.delete_failed", error=str(e))
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"error": str(e)},
+        )
+
+
+@app.post("/memory/clear")
+async def memory_clear(request: Request) -> JSONResponse:
+    """Clear all memories (use with caution)."""
+    pipeline = request.app.state.pipeline
+    if not pipeline.memory_retriever:
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"error": "Memory retrieval not enabled"},
+        )
+
+    try:
+        await pipeline.memory_retriever.clear()
+        return JSONResponse(content={"status": "all memories cleared"})
+    except Exception as e:
+        logger.error("memory.clear_failed", error=str(e))
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"error": str(e)},
+        )
 
 
 @app.post("/v1/chat/completions", response_model=None)
